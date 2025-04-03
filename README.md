@@ -28,8 +28,8 @@ Paramters:
 ### Requirements ###
 
   * Requires [GeoPandas](https://geopandas.org/en/stable/) library.
-  * Required to download [Topography 10](https://geotorget.lantmateriet.se/geodataprodukter/topografi-10-nedladdning-vektor/) (or Topo 50, 100, 250) files downloaded from [Lantmäteriet Geotorget](https://geotorget.lantmateriet.se/) (minimum the file corresponding to the selected category above, usually *Mark* and *Hydro(grafi)*).
-  * Required to download [Municipality boundaries](https://geotorget.lantmateriet.se/geodataprodukter/kommun-lan-rike-nedladdning-api/) downloaded from [Lantmäteriet Geotorget](https://geotorget.lantmateriet.se/).
+  * Requires to download [Topography 10](https://geotorget.lantmateriet.se/geodataprodukter/topografi-10-nedladdning-vektor/) (or Topo 50, 100, 250) files downloaded from [Lantmäteriet Geotorget](https://geotorget.lantmateriet.se/) (minimum the file corresponding to the selected category above, usually *Mark* and *Hydro(grafi)*).
+  * Requires permission to [Municipality boundaries](https://geotorget.lantmateriet.se/geodataprodukter/kommun-lan-rike-direkt-api) api at [Lantmäteriet Geotorget](https://geotorget.lantmateriet.se/).
   * Recommended to download the file [ortnamn_sverige_multipoint.geojson](https://www.jottacloud.com/s/059f4e21889c60d4e4aaa64cc857322b134/list/ortnamn%20sverige/ortnamn_Sverige_multipoint.geojson)) to get names on lakes, wetland, islands and rivers.
   * Recommended to download the Hydrografi files for [Topography 100](https://geotorget.lantmateriet.se/geodataprodukter/topografi-100-nedladdning-vektor/) and for [Topography 250](https://geotorget.lantmateriet.se/geodataprodukter/topografi-250-nedladdning-vektor/) to get meaningful *waterway=river* tagging.
 
@@ -42,11 +42,13 @@ Paramters:
 * River centerlines for *waterway=river* in *water=river* polygons are missing, but will hopefully be available if permission to use the *Hydrografi* dataset is obtained from Lantmätriet. 
 * Parts of he program has exponential complexity. Most municipalities will run in a few seconds, large municipalities will run in minutes, while the largest municipalities might require more than an hour to complete.
 * A few *FIXME=** tags are produced for place names whenever there are more than one name for an feature. Overlapping names are sorted by appearence in the various topo maps by Lantmäteriet (Topografi 250 with highest rank, then 100 etc).
+* Enclaves in municipalities are disregarded, i.e. everything within the outer boundary of the municipality is included. Exclaves are included for completeness.
 * See example files at [Topo Sverige](https://www.jottacloud.com/s/059f4e21889c60d4e4aaa64cc857322b134/list/topo%20sverige) on Jottacloud.
 
 ### Changelog
 
-* 0.3: Initial Beta version. A few minor improvements to be done.
+* v0.4: Loads municipality boundary from Lantmäteriet api; Enclaves are disregarded; Minor fixes and improvements.
+* v0.3: Initial Beta version. A few minor improvements to be done.
 
 ### References ###
 
