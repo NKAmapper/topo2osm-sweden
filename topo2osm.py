@@ -23,7 +23,7 @@ warnings.filterwarnings(
 )
 
 
-version = "0.3.0"
+version = "0.4.0"
 
 header = {"User-Agent": "nkamapper/topo2osm"}  # Header for other datasets than LM
 
@@ -44,8 +44,7 @@ json_output =      False	# Output complete and unprocessed geometry in geojson f
 get_name =         True 	# Use ortnamn2osm place names
 get_hydrografi =   False 	# Load LM lake and river data
 get_topo_rivers =  True 	# Use T100 and T50 topo data to determine rivers vs streams
-load_landuse =     False 	# Load clipped municipality file from LM for "mark" layers
-load_border	=      False	# Load municipality borders from LM instead of from local file
+load_landcover =   False 	# Load clipped municipality file from LM for "mark" layers (Marktäcke Nedladdning)
 merge_node =       True 	# Merge common nodes at intersections
 merge_grid =       True 	# Merge polygons across grids
 merge_wetland =    False	# Merge wetland segments with "gräns" type segments
@@ -832,6 +831,7 @@ def create_point (node, tags, uuid = None, object_type = "Debug"):
 	entry = {
 		'object': object_type,
 		'type': 'Point',
+		'uuid': uuid,
 		'coordinates': node,
 		'members': [],
 		'tags': {},
@@ -844,9 +844,6 @@ def create_point (node, tags, uuid = None, object_type = "Debug"):
 		entry['extras'].update(tags)
 	else:
 		entry['tags'].update(tags)
-
-	if uuid is not None:
-		entry['uuid'] = uuid
 
 	if debug or object_type != "Debug":
 		features.append(entry)
@@ -904,33 +901,63 @@ def load_municipality_boundary(municipality_id):
 
 	global municipality_boundary
 
-	# Either load from LM (currently not working)
-	if load_border:
-		header = { 'Authorization': 'Basic ' +  token }
-		endpoint = "https://api-ver.lantmateriet.se/ogc-features/v1/administrativ-indelning/collections/kommuner/items"
-		url = endpoint + "?crs=http://www.opengis.net/def/crs/EPSG/0/3006&f=json&&kommunkod=" + municipality_id
+	# Load boundary from LM
 
-		request = urllib.request.Request(url, headers=header)
-		try:
-			file = urllib.request.urlopen(request)
-		except urllib.error.HTTPError as err:
-			message("\t*** %s\n" % err)
-			sys.exit("\t*** Unable to load municipality boundary from '%s' - try again later\n\n" % endpoint)
+	header = { 'Authorization': 'Basic ' +  token }
+	endpoint = "https://api-ver.lantmateriet.se/ogc-features/v1/administrativ-indelning/collections/kommuner/items"
+	url = endpoint + "?crs=http://www.opengis.net/def/crs/EPSG/0/3006&f=json&&kommunkod=" + municipality_id
 
-		data = json.load(file)
-		file.close()
+	request = urllib.request.Request(url, headers=header)
+	try:
+		file = urllib.request.urlopen(request)
+	except urllib.error.HTTPError as err:
+		message ("\t*** HTTP error %i: %s\n" % (err.code, err.reason))
+		if err.code == 401:  # Unauthorized
+			message ("\t*** Wrong username (email) or password, or you need approval for 'Kommun, län och rike, Direkt' at Geotorget\n\n")
+			os.remove(token_filename)  # Enable reentry of username/password
+			sys.exit()
+		elif err.code == 403:  # Blocked
+			sys.exit()
+		else:
+			sys.exit()
 
-		borders = gpd.GeoDataFrame.from_features(data['features'], crs="EPSG:3006")
-		municipality_boundary = borders[ borders["kommunkod"] == municipality_id ]
+
+	data = json.load(file)
+	file.close()
+
+	# Keep only outer perimeter, disregarding inner rings
+
+	multipolygon = data['features'][0]['geometry']['coordinates']
+	if data['features'][0]['geometry'] == "Polygon":
+		multipolygon = [ multipolygon ]
+
+	new_multipolygon = []
+	for polygon in multipolygon:
+		new_polygon = [[ [ node[1], node[0] ] for node in polygon[0] ]]   # Keep outer ring only; swap x,y
+		outside = True
+		for outer_polygon in new_multipolygon:
+			if inside_polygon(new_polygon[0][0], outer_polygon[0]):  # Exclude outer polygons which are inside inner polygons
+				outside = False
+				break
+		if outside:
+			new_multipolygon.append(new_polygon)
+
+	data['features'][0]['geometry'] = {
+		'type': 'MultiPolygon',
+		'coordinates': new_multipolygon
+	}
+
+	municipality_boundary = gpd.GeoDataFrame.from_features(data['features'], crs="EPSG:3006")  # One feature only
 
 	# Alternative loading from local file
-	else:
-		filename = os.path.expanduser(topo_folder + "kommun-lan-rike_aktuell.gpkg")
-		if not os.path.isfile(filename):
-			sys.exit("\t*** File '%s' with municipality boundary not found\n\n" % filename)
 
-		borders = gpd.read_file(filename, layer="kommun")
-		municipality_boundary = borders[ borders["kommunkod"] == municipality_id ]
+#	filename = os.path.expanduser(topo_folder + "kommun-lan-rike_aktuell.gpkg")
+#	if not os.path.isfile(filename):
+#		sys.exit("\t*** File '%s' with municipality boundary not found\n\n" % filename)
+
+#	borders = gpd.read_file(filename, layer="kommun")
+#	municipality_boundary = borders[ borders["kommunkod"] == municipality_id ]
+
 
 
 # Get stored Geotorget token or ask for credentials
@@ -1238,7 +1265,7 @@ def load_topo_layers(data_category, topo_data):
 	if data_category == "hydro" and topo_product != "Topo10":
 		data_category = "hydrografi"
 
-	if load_landuse and data_category == "mark" and topo_product == "Topo10":
+	if load_landcover and data_category == "mark" and topo_product == "Topo10":
 
 		header = { 'Authorization': 'Basic ' +  token }
 		url = "https://dl1.lantmateriet.se/mark/marktacke/marktacke_kn%s.zip" % municipality_id
@@ -1248,16 +1275,16 @@ def load_topo_layers(data_category, topo_data):
 
 		try:
 			file_in = urllib.request.urlopen(request)
-		except urllib.error.HTTPError as e:
-			message ("\t*** HTTP error %i: %s\n" % (e.code, e.reason))
-			if e.code == 401:  # Unauthorized
+		except urllib.error.HTTPError as err:
+			message ("\t*** HTTP error %i: %s\n" % (err.code, err.reason))
+			if err.code == 401:  # Unauthorized
 				message ("\t*** Wrong username (email) or password, or you need approval for 'Marcktäcke Nedladdning, vektor' at Geotorget\n\n")
-				os.remove(token_filename)
+#				os.remove(token_filename)
 				sys.exit()
-			elif e.code == 403:  # Blocked
+			elif err.code == 403:  # Blocked
 				sys.exit()
 			else:
-				return
+				return topo_data
 
 		zip_file = zipfile.ZipFile(io.BytesIO(file_in.read()))
 		file = zip_file.open(filename)
@@ -1366,7 +1393,7 @@ def load_topo_data (municipality_id, municipality_name, data_category):
 
 		# Ensure clockwise orientation of clipped polygons from LM
 
-		if load_landuse and topo_product == "Topo10" and feature_type in object_sorting_order and polygon_area(coordinates[0]) > 0:
+		if load_landcover and topo_product == "Topo10" and feature_type in object_sorting_order and polygon_area(coordinates[0]) > 0:
 			for patch in coordinates:
 				patch.reverse()
 
@@ -2292,6 +2319,7 @@ def create_segment(coordinates, segment_type="Completion", used=1):
 	entry = {
 		'object': segment_type,
 		'type': 'LineString',
+		'uuid': None,
 		'coordinates': coordinates.copy(),
 		'members': [],
 		'tags': {},
@@ -2436,16 +2464,17 @@ def split_wetland_segments():
 
 								if new_coordinates and remaining_coordinates:
 									new_coordinates.append(remaining_coordinates[0])
-									shore_segments.append(split_segment(new_coordinates, segment))
+									if set(new_coordinates) != segment_set:
+										shore_segments.append(split_segment(new_coordinates, segment))
+										count_new += 1
 									new_coordinates = []
-									count_new += 1
 
 								# Build segment which is part of patch
 
 								while remaining_coordinates and remaining_coordinates[0] in patch_set:
 									new_coordinates.append(remaining_coordinates.pop(0))
 
-								if len(new_coordinates) > 1:
+								if len(new_coordinates) > 1 and set(new_coordinates) != segment_set:
 									shore_segments.append(split_segment(new_coordinates, segment))
 									count_new += 1
 								new_coordinates = [ new_coordinates[-1] ]
@@ -2518,7 +2547,7 @@ def split_wetland_segments():
 						# Determine direction
 						start = patch.index(segment['coordinates'][0])
 						second = patch.index(segment['coordinates'][1])
-						if second == start + 1:
+						if second > start or start == len(segment['coordinates']) - 2 and second < 2:  # Could wrap around
 							end = patch.index(segment['coordinates'][-1])
 						else:
 							end = start
@@ -2634,7 +2663,7 @@ def check_coastline():
 
 
 
-# Create missing KantUtsnitt segments to get complete polygons
+# Create missing segments to get complete polygons
 
 def create_missing_segments (patch, members):
 
@@ -3050,9 +3079,9 @@ def combine_segments():
 
 	for i, feature in enumerate(features):
 		if feature['type'] == "Polygon":
-			for patch in feature['members']:
+			for j, patch in enumerate(feature['members']):
 				for member in patch:
-					segments[ member ]['parents'].add(i)
+					segments[ member ]['parents'].add(( i, j ))  # tuple
 
 	# Part 2: Combine segments within each feature polygon (not across features/polygons)
 
@@ -3104,7 +3133,7 @@ def combine_segments():
 						and (segments[ patch[ (i-1) % n ] ]['object'] == "Gridline"
 							or segments[ patch[ (i+1) % n ] ]['object'] == "Gridline")):
 					coastlines.append(member)
-					segment['parents'].remove(j)
+					segment['parents'].remove((j,0))  # Outer patch 0
 
 	# Merge coastline segments until exhausted
 
@@ -3872,5 +3901,3 @@ if __name__ == '__main__':
 
 	duration = time.time() - start_time
 	message ("\tTotal run time %s\n\n" % timeformat(duration))
-
-
