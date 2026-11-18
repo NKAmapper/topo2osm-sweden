@@ -23,7 +23,7 @@ warnings.filterwarnings(
 )
 
 
-version = "0.4.0"
+version = "0.5.0"
 
 header = {"User-Agent": "nkamapper/topo2osm"}  # Header for other datasets than LM
 
@@ -33,9 +33,10 @@ topo_folder =       "~/Jottacloud/LM/"					# Folders containing national topo da
 place_name_folder = "~/Jottacloud/osm/ortnamn sverige/"	# Folder containing import SSR files (default folder tried first)
 
 precision = 7	 			# Decimals in coordinate output
-island_size = 100000  	 	# Minimum square meters for place=island vs place=islet
 simplify_factor = 0.2    	# Threshold for simplification
 max_combine_members = 10 	# Maximum members for a wood feature to be combined
+island_size = 100000  	 	# Minimum square meters for place=island vs place=islet (100k m2)
+lake_size = 1000000			# Minimum square meters for water=lake (1 km2)
 grid_size = 10000 			# 10x10 km (for Topo10, 50, 100)
 
 debug =            False	# Include debug tags and unused segments
@@ -77,7 +78,7 @@ avoid_objects = [  # Object types to exclude from output
 ]
 
 auxiliary_objects = [ # Area delimiter objects
-	'Bebyggelseområdesgräns', 'Industri- och handelsbebyggelsegräns', 'Odlingsmarksgräns', 'Skogsmarksgräns',
+	'Bebyggelseområdesgräns', 'Industri- och handelsbebyggelsegräns', 'Odlingsmarksgräns', 'Glaciärgräns', 'Skogsmarksgräns',
 	'Strandlinje, sjö', 'Strandlinje, anlagt vatten', 'Strandlinje, vattendragsyta', 'Strandlinje, hav',
 	'Stängning', 'Stängning mot hav', 'Öppen markgräns',
 	'Gridline'
@@ -97,7 +98,7 @@ object_sorting_order = [  # High priority will ensure ways in same direction
 
 segment_sorting_order = [  # High priority will ensure longer ways
 	'Strandlinje, hav', 'Stängning mot hav', 'Strandlinje, sjö', 'Strandlinje, anlagt vatten', 'Stängning', 'Strandlinje, vattendragsyta',
-	'Sankmark gräns', 'Industri- och handelsbebyggelsegräns', 'Bebyggelseområdesgräns', 'Odlingsmarksgräns', 'Skogsmarksgräns', 'Öppen markgräns',
+	'Sankmark gräns', 'Industri- och handelsbebyggelsegräns', 'Bebyggelseområdesgräns', 'Odlingsmarksgräns', 'Glaciärgräns', 'Skogsmarksgräns', 'Öppen markgräns',
 	'Gridline'
 ]
 
@@ -138,9 +139,9 @@ osm_tags = {
 	'Vattenfall':							{ 'waterway': 'waterfall' },
 	'Dammbyggnad':							{ 'waterway': 'dam' },
 	'Dammbyggnad, punkt':					{ 'waterway': 'dam' },
-	'Brygga':								{ 'man_made': 'pier' },
 	'Pir':									{ 'man_made': 'breakwater' },
 	'Kaj':									{ 'man_made': 'quay' },
+	'Brygga':								{ 'man_made': 'pier' },
 	'Avbärare':								{ 'seamark:type': 'shoreline_construction', 'seamark:shoreline_construction:category': 'groyne' },
 	'Ledverk':								{ 'seamark:type': 'shoreline_construction', 'seamark:shoreline_construction:category': 'fender' },
 	'Dykdalb':								{ 'seamark:type': 'mooring', 'seamark:mooring:category': 'dolphin', 'mooring': 'yes' },
@@ -209,8 +210,8 @@ osm_tags = {
 	'Gångstig':								{ 'highway': 'path' },
 	'Elljusspår':							{ 'highway': 'path', 'lit': 'yes' },
 	'Traktorväg':							{ 'highway': 'track' },
-	'Vandringsled':							{ 'highway': 'path', 'trailblazed': 'yes' },
-	'Vandrings- och vinterled':				{ 'highway': 'path', 'trailblazed': 'yes' },
+	'Vandringsled':							{ 'trailblazed': 'yes' },
+	'Vandrings- och vinterled':				{ 'trailblazed': 'yes' },
 	'Vad':									{ 'ford': 'yes' },
 	'Hjälptelefon':							{ 'emergency': 'phone' },
 	'Parkering':							{ 'amenity': 'parking', 'hiking': 'yes' },
@@ -311,6 +312,8 @@ def tag_object(feature_type, geometry_type, properties, feature):
 			tags['waterway'] = "river"
 		else:
 			tags['waterway'] = "stream"
+		if "reglerat_vatten" in properties and properties['reglerat_vatten'] == "Ja":
+			tags['intermittent'] = "yes"
 		if "vattendragsid" in properties:
 			tags['VATTENDRAG'] = properties['vattendragsid']
 
@@ -399,11 +402,11 @@ def tag_object(feature_type, geometry_type, properties, feature):
 		tags.update(osm_tags[ feature_type ])
 		if "skoterkorning_tillaten" in properties:
 			if properties['skoterkorning_tillaten'] == "Ja":
-				tags['scooter'] = "yes"
+				tags['snowmobile'] = "yes"
 			elif properties['skoterkorning_tillaten'] == "Påbjuden":
-				tags['scooter'] = "designated"
+				tags['snowmobile'] = "designated"
 			elif properties['skoterkorning_tillaten'] == "Nej":
-				tags['scooter'] = "no"
+				tags['snowmobile'] = "no"
 		if "vagutforande" in properties:
 			if properties['vagutforande'] in ["Bro", "Sommarbro"]:
 				tags['bridge'] = "yes"
@@ -904,8 +907,8 @@ def load_municipality_boundary(municipality_id):
 	# Load boundary from LM
 
 	header = { 'Authorization': 'Basic ' +  token }
-	endpoint = "https://api-ver.lantmateriet.se/ogc-features/v1/administrativ-indelning/collections/kommuner/items"
-	url = endpoint + "?crs=http://www.opengis.net/def/crs/EPSG/0/3006&f=json&&kommunkod=" + municipality_id
+	endpoint = "https://api.lantmateriet.se/ogc-features/v1/administrativ-indelning/collections/kommuner/items"
+	url = endpoint + "?crs=http://www.opengis.net/def/crs/EPSG/0/3006&f=json&kommunkod=" + municipality_id
 
 	request = urllib.request.Request(url, headers=header)
 	try:
@@ -977,9 +980,9 @@ def get_token():
 		token = file.read()
 		file.close()
 	else:
-		message ("Please provide Geotorget login (you need approval for 'Topografi 10 Nedladdning, vektor') ...\n")
-		username = input("\tUser name: ")
-		password = input("\tPassword:  ")
+		message ("Please provide Geotorget login (you need approval for 'Kommun, län och rike, Direkt') ...\n")
+		username = input("\tUser name (email): ")
+		password = input("\tPassword:          ")
 		token = username + ":" + password
 		token = base64.b64encode(token.encode()).decode()
 		file = open(filename, "w")
@@ -1770,7 +1773,7 @@ def load_hydrografi_lakes():
 
 			if "ele" in lake and "ele" not in feature['tags']:
 				feature['tags']['ele'] = str(lake['ele'])  # No decimals
-			if lake['area'] > 1000000 and "water" not in feature['tags']:  # 1 km2
+			if lake['area'] > lake_size and "water" not in feature['tags']:
 				feature['tags']['water'] = "lake"
 #			if lake['tidal']:
 #				feature['tags']['tidal'] = "yes"
@@ -1900,7 +1903,13 @@ def create_place_name_point(place):
 	elif tags['DETALJTYP'] == "Vattenfall":
 		tags['waterway'] = "waterfall"
 
+	# Add place name category and highest ranking topo reference
 	tags['FIXME'] = "Insert " + tags.pop("DETALJTYP", None)
+	for tag in ["T250", "T100", "T50", "T10"]:
+		if tag in place['tags']:
+			tags['FIXME'] += " [%s-%s]" % (tag, place['tags'][ tag ])
+			break
+
 	create_point(point, tags, object_type = "Ortnamn")
 
 
@@ -2279,12 +2288,9 @@ def get_place_names():
 
 	for elements in [features, segments]:
 		for element in elements:
-			first = True
 			for tag in ["T250", "T100", "T50", "T10"]:
 				if tag in element['tags']:
-					if not first:
-						del element['tags'][ tag ]
-					first = False
+					del element['tags'][ tag ]
 				if tag + "_DISTANCE" in element['tags']:
 					del element['tags'][ tag + "_DISTANCE" ]
 			for tag in ["KOMMUN", "DETALJTYP"]:
@@ -3009,6 +3015,14 @@ def combine_features():
 	remove_features.sort(reverse=True)
 	for i in remove_features:
 		del features[ i ]
+
+	# Tag lakes
+
+	for feature in features:
+		if feature['object'] == "Sjö" and "water" not in feature['tags']:
+			area = abs(multipolygon_area(feature['coordinates']))
+			if area > lake_size:
+				feature['tags']['water'] = "lake"
 
 	message ("\tCombined %i features\n" % len(remove_features))
 
@@ -3845,10 +3859,8 @@ if __name__ == '__main__':
 		message ("Topo category:\t%s\n" % data_category)
 	message ("\n")
 
-	if data_category in ["topo", "mark"]:
-		token = get_token()
-
 	if data_category != "mark":
+		token = get_token()
 		load_municipality_boundary(municipality_id)
 
 	# Get other options
